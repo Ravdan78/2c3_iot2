@@ -1,89 +1,81 @@
 import socket
-import ujson as json
-import time
+import json
 from machine import Pin, ADC
-import dht
+import _thread
+import time
 import wifi
+import dht
 import network
-from time import sleep
+
 
 dht11_sensor = dht.DHT11(Pin(18))
-mq2_pin = ADC(33)
-mq7_pin = ADC(35)
-mq135_pin = ADC(32)
+mq2 = ADC(Pin(33))
+mq7 = ADC(Pin(35))
+mq135 = ADC(Pin(32))
+
+led_pin = Pin(14, Pin.OUT)
 
 RPI_SERVER_IP = "172.20.10.4"
 RPI_SERVER_PORT = 12345
 
-LED_PIN = 14
-led = Pin(LED_PIN, Pin.OUT)
-
 def toggle_led(x):
-    led.value(1)
-    sleep(x)
-    led.value(0)
+    while True:
+        led_pin.value(1)
+        time.sleep(1)
+        led_pin.value(0)
+        time.sleep(x)
 
 def send_data_to_rpi(data):
-    ports = [RPI_SERVER_PORT]
-    for port in ports:
+    retry_count = 0
+    max_retries = 3
+    success = False
+
+    while retry_count < max_retries and not success:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((RPI_SERVER_IP, port))
-            s.sendall(data.encode())
+            s.connect((RPI_SERVER_IP, RPI_SERVER_PORT))
+            s.send(data.encode())
             s.close()
+            print(f"Data sent successfully to {RPI_SERVER_IP}:{RPI_SERVER_PORT}")
+            success = True
         except OSError as e:
-            print(f'Failed to send data to Raspberry Pi on port {port}:', e)
+            retry_count += 1
+            time.sleep(2)
 
-def read_dht11():
-    try:
+    if not success:
+        print("Failed to send data after retries")
+
+def read_sensors():
+    while True:
+        mq2_value = mq2.read()
+        send_data_to_rpi(json.dumps({"sensor_type": "mq2", "mq2_value": mq2_value}))
+        print("mq2   ", mq2_value)
+
+        mq7_value = mq7.read()
+        send_data_to_rpi(json.dumps({"sensor_type": "mq7", "mq7_value": mq7_value}))
+        print("mq7   ", mq7_value)
+
+        mq135_value = mq135.read()
+        send_data_to_rpi(json.dumps({"sensor_type": "mq135", "mq135_value": mq135_value}))
+        print("mq135   ", mq135_value)
+
         dht11_sensor.measure()
         temp = dht11_sensor.temperature()
         hum = dht11_sensor.humidity()
         dht_data = {"sensor_type": "dht11", "temperature": temp, "humidity": hum}
-        data = json.dumps(dht_data)
-        send_data_to_rpi(data)
-    except OSError as e:
-        print('Not able to read DHT11 data:', e)
+        send_data_to_rpi(json.dumps(dht_data))
+        print ("temp   ",temp)
+        print ("humitidy   ", hum)
 
-def read_mq2():
-    try:
-        mq2_value = mq2_pin.read()
-        mq2_data = {"sensor_type": "mq2", "mq2_value": mq2_value}
-        data = json.dumps(mq2_data)
-        send_data_to_rpi(data)
-    except OSError as e:
-        print('Not able to read MQ2 data:', e)
+        time.sleep(5)
 
-def read_mq7():
-    try:
-        mq7_value = mq7_pin.read()
-        mq7_data = {"sensor_type": "mq7", "mq7_value": mq7_value}
-        data = json.dumps(mq7_data)
-        send_data_to_rpi(data)
-    except OSError as e:
-        print('Not able to read MQ7 data:', e)
-
-def read_mq135():
-    try:
-        mq135_value = mq135_pin.read()
-        mq135_data = {"sensor_type": "mq135", "mq135_value": mq135_value}
-        data = json.dumps(mq135_data)
-        send_data_to_rpi(data)
-    except OSError as e:
-        print('Not able to read MQ135 data:', e)
 
 def main():
-    wifi.connect_wifi()
-    while True:
-        read_dht11()
-        sleep(5)
-        read_mq2()
-        sleep(5)
-        read_mq7()
-        sleep(5)
-        read_mq135()
-        sleep(5)
-        toggle_led(1)
+    _thread.start_new_thread(read_sensors, ())
+    _thread.start_new_thread(toggle_led, (15,))
 
 if __name__ == "__main__":
     main()
+
+
+
